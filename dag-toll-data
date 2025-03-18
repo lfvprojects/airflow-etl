@@ -1,0 +1,95 @@
+from airflow import DAG
+from airflow.operators.bash import BashOperator
+from datetime import datetime, timedelta
+
+# Default arguments
+default_args = {
+    "owner": "ENA",
+    "start_date": datetime.today(),
+    "email": ["alerts@ena.com"],
+    "email_on_failure": True,
+    "email_on_retry": True,
+    "retries": 1,
+    "retry_delay": timedelta(minutes=5),
+}
+
+#Define DAG
+dag = DAG(
+    dag_id="ETL_toll_data",
+    default_args=default_args,
+    description="Apache Airflow Final Assignment",
+    schedule_interval="@daily",
+    catchup=False,
+)
+
+#Define file paths
+staging_dir = "/opt/airflow/dags/finalassignment/staging"
+tgz_file = f"{staging_dir}/tolldata.tgz"
+extract_path = staging_dir
+
+#Unzip Data
+unzip_data = BashOperator(
+    task_id="unzip_data",
+    bash_command=f"tar -xvzf {tgz_file} -C {extract_path}",
+    dag=dag,
+)
+
+#Extract data from CSV
+input_csv = f"{staging_dir}/vehicle-data.csv"
+output_csv = f"{staging_dir}/csv_data.csv"
+
+extract_data_from_csv = BashOperator(
+    task_id="extract_data_from_csv",
+    bash_command=f"cut -d',' -f1,2,3,4 {input_csv} > {output_csv}",
+    dag=dag,
+)
+
+#Extract data from TSV
+input_tsv = f"{staging_dir}/tollplaza-data.tsv"
+output_tsv = f"{staging_dir}/tsv_data.csv"
+
+extract_data_from_tsv = BashOperator(
+    task_id="extract_data_from_tsv",
+    bash_command=f"cut -f2,3,4 {input_tsv} > {output_tsv}",
+    dag=dag,
+)
+
+#Extract data from Fixed-Width File
+input_txt = f"{staging_dir}/payment-data.txt"
+output_fixed_width = f"{staging_dir}/fixed_width_data.csv"
+
+extract_data_from_fixed_width = BashOperator(
+    task_id="extract_data_from_fixed_width",
+    bash_command=f"awk '{{print substr($0, 7, 4), substr($0, 18, 5)}}' {input_txt} > {output_fixed_width}",
+    dag=dag,
+)
+
+#Consolidate all extracted data
+output_consolidated = f"{staging_dir}/extracted_data.csv"
+
+consolidate_data = BashOperator(
+    task_id="consolidate_data",
+    bash_command=(
+        f'echo "Rowid,Timestamp,Anonymized Vehicle number,Vehicle type,Number of axles,Tollplaza id,Tollplaza code,Type of Payment code,Vehicle Code" > {output_consolidated} && '
+        f'paste -d "," {output_csv} {output_tsv} {output_fixed_width} >> {output_consolidated}'
+    ),
+    dag=dag,
+)
+
+#Transform vehicle_type column to uppercase
+output_transformed = f"{staging_dir}/transformed_data.csv"
+
+transform_data = BashOperator(
+    task_id="transform_data",
+    bash_command=(
+        f"awk 'BEGIN{{FS=OFS=\",\"}} NR==1 {{print $0}} NR>1 {{$4=toupper($4); print}}' "
+        f"{output_consolidated} > {output_transformed}"
+    ),
+    dag=dag,
+)
+
+# Define task dependencies (Pipeline Order)
+unzip_data >> extract_data_from_csv >> extract_data_from_tsv >> extract_data_from_fixed_width >> consolidate_data >> transform_data
+
+
+im uploading this airflow based pipeline to github, create a readme file for the code
